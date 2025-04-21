@@ -52,10 +52,15 @@ describe('PersonaRegistry Integration Test with JsonStorageDriver', () => {
     // 3. Verify file content (should be an array)
     const fileContent = await fs.readFile(storagePath, 'utf-8');
     const parsedContent = JSON.parse(fileContent);
-    expect(Array.isArray(parsedContent)).toBe(true);
-    expect(parsedContent).toHaveLength(1);
-    // Find the persona in the array (order not guaranteed, though likely stable)
-    const savedPersonaData = parsedContent.find((p: Persona) => p.id === createdPersona1.id);
+    // expect(Array.isArray(parsedContent)).toBe(true);
+    expect(typeof parsedContent).toBe('object'); // Should be an object {active: [], archived: []}
+    expect(Array.isArray(parsedContent.active)).toBe(true);
+    expect(Array.isArray(parsedContent.archived)).toBe(true);
+    expect(parsedContent.active).toHaveLength(1);
+    expect(parsedContent.archived).toHaveLength(0);
+    
+    // Find the persona in the active array 
+    const savedPersonaData = parsedContent.active.find((p: Persona) => p.id === createdPersona1.id);
     expect(savedPersonaData).toBeDefined();
     // Compare the saved data with the created persona object
     expect(savedPersonaData).toEqual(createdPersona1);

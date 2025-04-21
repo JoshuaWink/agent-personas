@@ -1,6 +1,12 @@
 import fs from 'fs/promises'; // Use promises API
 import path from 'path';
-import { Persona, StorageDriver } from '../types';
+import { Persona, StorageDriver, PersonaStorageState } from '../types';
+
+// Structure expected in the JSON file
+interface JsonFileStructure {
+  active: Persona[];
+  archived: Persona[];
+}
 
 export class JsonStorageDriver implements StorageDriver {
   private filePath: string;
@@ -12,64 +18,82 @@ export class JsonStorageDriver implements StorageDriver {
     this.filePath = filePath;
   }
 
-  async save(personas: Map<string, Persona>): Promise<void> {
-    try {
-      // Convert Map values to an array for storage
-      const personasArray = Array.from(personas.values());
-      const data = JSON.stringify(personasArray, null, 2); // Pretty print JSON
-
-      // Ensure directory exists before trying to write
-      const dir = path.dirname(this.filePath);
-      await fs.mkdir(dir, { recursive: true });
-
-      await fs.writeFile(this.filePath, data, 'utf-8');
-    } catch (error) {
-      console.error(`Error saving personas to ${this.filePath}:`, error);
-      // Re-throw or handle as appropriate for the application
-      throw error;
+  // Helper to convert array to Map, skipping invalid entries
+  private _arrayToMap(personasArray: Persona[] | undefined): Map<string, Persona> {
+    const map = new Map<string, Persona>();
+    if (!Array.isArray(personasArray)) {
+        return map; // Return empty map if input is not an array
     }
+    personasArray.forEach(persona => {
+      if (persona && typeof persona.id === 'string') {
+        map.set(persona.id, persona);
+      } else {
+        console.warn(`Skipping invalid persona object during load from ${this.filePath}:`, persona);
+      }
+    });
+    return map;
   }
 
-  async load(): Promise<Map<string, Persona>> {
+  async load(): Promise<PersonaStorageState> {
+     const defaultState: PersonaStorageState = { 
+        active: new Map<string, Persona>(), 
+        archived: new Map<string, Persona>() 
+    };
     try {
-      // Ensure directory exists before trying to read
       const dir = path.dirname(this.filePath);
       await fs.mkdir(dir, { recursive: true });
 
-      // Try reading the file
       const data = await fs.readFile(this.filePath, 'utf-8');
-      const personasArray: Persona[] = JSON.parse(data);
+      // Handle empty file case explicitly before parsing
+      if (data.trim() === '') {
+        return defaultState;
+      }
 
-      // Convert array back to Map keyed by ID for the registry
-      const personasMap = new Map<string, Persona>();
-      if (Array.isArray(personasArray)) {
-        personasArray.forEach(persona => {
-          // Basic validation: ensure persona has an ID
-          if (persona && typeof persona.id === 'string') {
-             personasMap.set(persona.id, persona);
-          } else {
-            console.warn(`Skipping invalid persona object during load from ${this.filePath}:`, persona);
-          }
-        });
-      } else {
-         console.warn(`Invalid data format loaded from ${this.filePath}. Expected an array.`);
-         // Return empty map if format is wrong
-         return new Map<string, Persona>();
+      const fileData = JSON.parse(data) as JsonFileStructure;
+
+      // Basic validation of the loaded structure
+      if (typeof fileData !== 'object' || fileData === null) {
+         console.warn(`Invalid data format loaded from ${this.filePath}. Expected an object with 'active' and 'archived' arrays.`);
+         return defaultState;
       }
-      return personasMap;
+
+      const activeMap = this._arrayToMap(fileData.active);
+      const archivedMap = this._arrayToMap(fileData.archived);
+
+      return { active: activeMap, archived: archivedMap };
     } catch (error: any) {
-      // If file doesn't exist (ENOENT), it's not an error, just return empty map
       if (error.code === 'ENOENT') {
-        return new Map<string, Persona>();
+        return defaultState; // File not found is okay, return default empty state
       }
-      // Handle JSON parsing errors or other read errors
       if (error instanceof SyntaxError) {
         console.warn(`Invalid JSON found in ${this.filePath}: ${error.message}`);
       } else {
         console.error(`Error loading personas from ${this.filePath}:`, error);
       }
-      // Return empty map in case of error during load
-      return new Map<string, Persona>();
+      return defaultState; // Return default empty state on error
+    }
+  }
+
+  async save(state: PersonaStorageState): Promise<void> {
+    try {
+      // Convert maps to arrays for storage
+      const activeArray = Array.from(state.active.values());
+      const archivedArray = Array.from(state.archived.values());
+      
+      const fileData: JsonFileStructure = { 
+        active: activeArray, 
+        archived: archivedArray 
+      };
+      
+      const dataString = JSON.stringify(fileData, null, 2); // Pretty print JSON
+
+      const dir = path.dirname(this.filePath);
+      await fs.mkdir(dir, { recursive: true });
+
+      await fs.writeFile(this.filePath, dataString, 'utf-8');
+    } catch (error) {
+      console.error(`Error saving personas state to ${this.filePath}:`, error);
+      throw error;
     }
   }
 } 

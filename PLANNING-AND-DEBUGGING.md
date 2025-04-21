@@ -175,11 +175,39 @@ We follow an incremental approach: **Test -> Code -> Refactor**.
 
 ---
 
+## 🧪 Phase 12: Error Handling (Duplicate Names)
+
+1.  **Write Test:** Add test to `PersonaRegistry.test.ts` expecting `createPersona` to throw when called with an existing name. - **Done** ✅
+2.  **Run Test & Expect Failure:** Run `npm test`. Test failed as expected (`resolved instead of rejected`). - **Success! (Red Phase Complete)** ✅🟥
+3.  **Implement:** Modify `createPersona` in `PersonaRegistry.ts` to iterate existing personas and throw an error if `input.name` matches an existing `persona.name`. - **Done** ✅
+4.  **Run Test & Expect Success:** Run `npm test`. - **Success! All tests passed.** ✅🟢
+5.  **Refactor:** Code is straightforward (iterate, check includes, throw). No immediate refactoring needed. - **Done** ✅🔵
+
+---
+
+## ✅ Phase 12: Error Handling (Duplicate Names) [Completed]
+
+---
+
+## 🧪 Phase 13: Duplicate Persona Feature
+
+1.  **Write Test:** Add test suite `duplicatePersona` to `PersonaRegistry.test.ts` covering unique ID generation, name modification (incl. collision handling), field copying, new timestamps, registry addition, and error handling. - **Done** ✅
+2.  **Run Test & Expect Failure:** Run `npm test`. Tests failed as expected (`duplicatePersona is not a function`). - **Success! (Red Phase Complete)** ✅🟥
+3.  **Implement:** Add `duplicatePersona` method and `_findAvailableCopyName` helper to `PersonaRegistry.ts`. Logic finds original, determines new name, prepares input, and calls `createPersona`. - **Done** ✅
+4.  **Run Test & Expect Success:** Run `npm test`. Initial run had 2 failures (copy name collision logic & brittle timestamp check). Fixed implementation and test checks. - **Success! All tests passed.** ✅🟢
+5.  **Refactor:** Reviewed implementation. Copy logic seems reasonable. Using `createPersona` internally keeps ID/timestamp/save logic centralized. - **Done** ✅🔵
+
+---
+
+## ✅ Phase 13: Duplicate Persona Feature [Completed]
+
+---
+
 ## ❓ Next Steps / Planning
 
-*   **Error Handling:** Improve error handling (e.g., `createPersona` for duplicate *names* - requires adding a check). Add specific tests for these cases.
+*   **Error Handling:** Improve error handling (e.g., `createPersona` for duplicate *names* - requires adding a check). Add specific tests for these cases. - **(Duplicate name check DONE)** What other errors? Maybe invalid input validation?
 *   **API Completeness:** Add any missing methods from `PROJECT-OVERVIEW.md` API table (double-check if any were missed - seems complete for now).
 *   **Code Cleanup:** Review TODOs, potentially add more robust validation.
-*   **Documentation Update:** Add future plans (Versioning, History, Duplication) to `PROJECT-OVERVIEW.md`.
+*   **Documentation Update:** Add future plans (Versioning, History, Duplication) to `PROJECT-OVERVIEW.md`. - **Done** ✅
 
 *(Choose next step...)* 

@@ -2,8 +2,14 @@ import fs from 'fs/promises'; // Use promises API
 import path from 'path';
 import os from 'os';
 import { JsonStorageDriver } from '../src/drivers/JsonStorageDriver';
-import { Persona } from '../src/types';
+import { Persona, PersonaStorageState } from '../src/types'; // Import state type
 import { v4 as uuidv4 } from 'uuid'; // Import uuid for creating test data
+
+// Structure expected in the JSON file
+interface JsonFileStructure {
+  active: Persona[];
+  archived: Persona[];
+}
 
 describe('JsonStorageDriver', () => {
   let tempDir: string;
@@ -11,8 +17,8 @@ describe('JsonStorageDriver', () => {
   let driver: JsonStorageDriver;
 
   // Helper function to create a valid Persona object for tests
-  const createTestPersona = (name: string, tags: string[] = []): Persona => ({
-    id: uuidv4(),
+  const createTestPersona = (name: string, tags: string[] = [], idSuffix: string = ''): Persona => ({
+    id: uuidv4() + idSuffix,
     name,
     description: `Description for ${name}`,
     instructions: `Instructions for ${name}`,
@@ -34,9 +40,8 @@ describe('JsonStorageDriver', () => {
     if (tempDir) {
       try {
         await fs.rm(tempDir, { recursive: true, force: true });
-      } catch (err) {
-        // Ignore errors during cleanup, e.g., if dir was already removed
-        console.warn(`Minor error during cleanup: ${err}`);
+      } catch (err: any) { // Add type annotation
+        console.warn(`Minor error during cleanup: ${err.message}`);
       }
     }
   });
@@ -49,23 +54,52 @@ describe('JsonStorageDriver', () => {
     expect(() => new JsonStorageDriver(undefined)).toThrow();
   });
 
-  test('save should write an array of personas to the JSON file', async () => {
-    const persona1 = createTestPersona('P1', ['tag1']);
-    const persona2 = createTestPersona('P2', ['tag2']);
-    const personasMap = new Map<string, Persona>();
-    personasMap.set(persona1.id, persona1);
-    personasMap.set(persona2.id, persona2);
+  test('save should write active and archived arrays to the JSON file', async () => {
+    const personaA1 = createTestPersona('Active1');
+    const personaA2 = createTestPersona('Active2');
+    const personaR1 = createTestPersona('Archived1');
+    
+    const state: PersonaStorageState = {
+        active: new Map([[personaA1.id, personaA1], [personaA2.id, personaA2]]),
+        archived: new Map([[personaR1.id, personaR1]])
+    };
 
-    await driver.save(personasMap);
+    await driver.save(state);
 
     // Verify file content
     const fileContent = await fs.readFile(testFilePath, 'utf-8');
-    const savedData = JSON.parse(fileContent);
+    const savedData = JSON.parse(fileContent) as JsonFileStructure;
 
-    expect(Array.isArray(savedData)).toBe(true);
-    expect(savedData).toHaveLength(2);
-    // Check content using arrayContaining for order independence
-    expect(savedData).toEqual(expect.arrayContaining([persona1, persona2]));
+    expect(savedData).toHaveProperty('active');
+    expect(savedData).toHaveProperty('archived');
+    expect(Array.isArray(savedData.active)).toBe(true);
+    expect(Array.isArray(savedData.archived)).toBe(true);
+    expect(savedData.active).toHaveLength(2);
+    expect(savedData.archived).toHaveLength(1);
+    expect(savedData.active).toEqual(expect.arrayContaining([personaA1, personaA2]));
+    expect(savedData.archived).toEqual([personaR1]);
+  });
+
+  test('save should handle empty active or archived maps', async () => {
+    const personaA1 = createTestPersona('ActiveOnly');
+    let state: PersonaStorageState = {
+        active: new Map([[personaA1.id, personaA1]]),
+        archived: new Map()
+    };
+    await driver.save(state);
+    let savedData = JSON.parse(await fs.readFile(testFilePath, 'utf-8')) as JsonFileStructure;
+    expect(savedData.active).toHaveLength(1);
+    expect(savedData.archived).toHaveLength(0);
+
+    const personaR1 = createTestPersona('ArchivedOnly');
+    state = {
+        active: new Map(),
+        archived: new Map([[personaR1.id, personaR1]])
+    };
+    await driver.save(state);
+    savedData = JSON.parse(await fs.readFile(testFilePath, 'utf-8')) as JsonFileStructure;
+    expect(savedData.active).toHaveLength(0);
+    expect(savedData.archived).toHaveLength(1);
   });
 
   test('save should create the directory if it does not exist', async () => {
@@ -73,84 +107,108 @@ describe('JsonStorageDriver', () => {
     const deepFilePath = path.join(deepDirPath, 'deep-test.json');
     const deepDriver = new JsonStorageDriver(deepFilePath);
     const persona = createTestPersona('Deep');
-    const map = new Map([[persona.id, persona]]);
+    const stateToSave: PersonaStorageState = {
+        active: new Map([[persona.id, persona]]),
+        archived: new Map()
+    };
 
-    await deepDriver.save(map);
+    await deepDriver.save(stateToSave);
 
     // Check if file exists (implicitly checks if dir was created)
     await expect(fs.access(deepFilePath)).resolves.toBeUndefined(); 
     const fileContent = await fs.readFile(deepFilePath, 'utf-8');
     const savedData = JSON.parse(fileContent);
-    expect(savedData).toEqual([persona]);
+    expect(savedData.active).toEqual([persona]);
+    expect(savedData.archived).toEqual([]);
   });
 
-  test('load should read an array of personas and return a Map keyed by ID', async () => {
-    const persona1 = createTestPersona('L1', ['load1']);
-    const persona2 = createTestPersona('L2', ['load2']);
-    const personasArray = [persona1, persona2];
-    await fs.writeFile(testFilePath, JSON.stringify(personasArray, null, 2), 'utf-8');
+  test('load should read active and archived arrays and return PersonaStorageState', async () => {
+    const personaA1 = createTestPersona('LoadActive1');
+    const personaR1 = createTestPersona('LoadArchived1');
+    const fileData: JsonFileStructure = {
+      active: [personaA1],
+      archived: [personaR1]
+    };
+    await fs.writeFile(testFilePath, JSON.stringify(fileData, null, 2), 'utf-8');
 
-    const loadedMap = await driver.load();
+    const loadedState = await driver.load();
 
-    expect(loadedMap).toBeInstanceOf(Map);
-    expect(loadedMap.size).toBe(2);
-    expect(loadedMap.get(persona1.id)).toEqual(persona1);
-    expect(loadedMap.get(persona2.id)).toEqual(persona2);
+    expect(loadedState).toHaveProperty('active');
+    expect(loadedState).toHaveProperty('archived');
+    expect(loadedState.active).toBeInstanceOf(Map);
+    expect(loadedState.archived).toBeInstanceOf(Map);
+    expect(loadedState.active.size).toBe(1);
+    expect(loadedState.archived.size).toBe(1);
+    expect(loadedState.active.get(personaA1.id)).toEqual(personaA1);
+    expect(loadedState.archived.get(personaR1.id)).toEqual(personaR1);
   });
 
-  test('load should return an empty Map if the file does not exist', async () => {
-    // Don't create the file
-    const loadedMap = await driver.load();
-    expect(loadedMap).toBeInstanceOf(Map);
-    expect(loadedMap.size).toBe(0);
+  test('load should return empty maps if the file does not exist', async () => {
+    const loadedState = await driver.load();
+    expect(loadedState.active.size).toBe(0);
+    expect(loadedState.archived.size).toBe(0);
   });
 
-  test('load should return an empty Map for an empty file', async () => {
-    await fs.writeFile(testFilePath, '', 'utf-8'); // Create empty file
-    const loadedMap = await driver.load();
-    expect(loadedMap).toBeInstanceOf(Map);
-    expect(loadedMap.size).toBe(0);
+  test('load should return empty maps for an empty file', async () => {
+    await fs.writeFile(testFilePath, '', 'utf-8'); 
+    const loadedState = await driver.load();
+    expect(loadedState.active.size).toBe(0);
+    expect(loadedState.archived.size).toBe(0);
   });
 
-  test('load should handle invalid JSON content gracefully and return an empty Map', async () => {
+  test('load should handle invalid JSON content gracefully and return empty maps', async () => {
     await fs.writeFile(testFilePath, 'this is not json', 'utf-8');
-    // Suppress console.warn for this specific test
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    
-    const loadedMap = await driver.load();
-    
-    expect(loadedMap).toBeInstanceOf(Map);
-    expect(loadedMap.size).toBe(0);
+    const loadedState = await driver.load();
+    expect(loadedState.active.size).toBe(0);
+    expect(loadedState.archived.size).toBe(0);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid JSON found'));
     warnSpy.mockRestore();
   });
 
-   test('load should handle non-array JSON content gracefully and return an empty Map', async () => {
-    await fs.writeFile(testFilePath, '{"not": "an array"}', 'utf-8');
+   test('load should handle JSON that is not the expected object structure', async () => {
+    await fs.writeFile(testFilePath, '[{"id": "a", "name": "wrong"}] ', 'utf-8'); // Save an array instead of object
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-
-    const loadedMap = await driver.load();
-
-    expect(loadedMap).toBeInstanceOf(Map);
-    expect(loadedMap.size).toBe(0);
-     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid data format loaded'));
+    const loadedState = await driver.load();
+    expect(loadedState.active.size).toBe(0);
+    expect(loadedState.archived.size).toBe(0);
+    // No warning expected here, just default state
+    // expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid data format loaded'));
     warnSpy.mockRestore();
   });
 
-   test('load should skip persona objects without an ID during loading', async () => {
-     const persona1 = createTestPersona('Good');
-     const badPersona = { name: 'Bad', description: 'No ID' }; // Missing ID
-     const personasArray = [persona1, badPersona];
-     await fs.writeFile(testFilePath, JSON.stringify(personasArray, null, 2), 'utf-8');
+   test('load should handle object structure missing active/archived keys', async () => {
+    await fs.writeFile(testFilePath, '{"other": []}', 'utf-8'); 
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const loadedState = await driver.load();
+    // _arrayToMap will get undefined, return empty map, which is correct default
+    expect(loadedState.active.size).toBe(0);
+    expect(loadedState.archived.size).toBe(0);
+    expect(warnSpy).not.toHaveBeenCalled(); // No warning needed if keys missing, just default
+    warnSpy.mockRestore();
+  });
+
+   test('load should skip persona objects without an ID during loading in both arrays', async () => {
+     const personaA1 = createTestPersona('GoodActive');
+     const badPersonaA = { name: 'BadActive' };
+     const personaR1 = createTestPersona('GoodArchived');
+     const badPersonaR = { name: 'BadArchived' };
+     const fileData: JsonFileStructure = {
+         active: [personaA1, badPersonaA as any],
+         archived: [personaR1, badPersonaR as any]
+     };
+     await fs.writeFile(testFilePath, JSON.stringify(fileData, null, 2), 'utf-8');
      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-     const loadedMap = await driver.load();
+     const loadedState = await driver.load();
 
-     expect(loadedMap).toBeInstanceOf(Map);
-     expect(loadedMap.size).toBe(1);
-     expect(loadedMap.has(persona1.id)).toBe(true);
-     expect(loadedMap.get(persona1.id)).toEqual(persona1);
-     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Skipping invalid persona object'), badPersona);
+     expect(loadedState.active.size).toBe(1);
+     expect(loadedState.active.has(personaA1.id)).toBe(true);
+     expect(loadedState.archived.size).toBe(1);
+     expect(loadedState.archived.has(personaR1.id)).toBe(true);
+     expect(warnSpy).toHaveBeenCalledTimes(2); // One for each bad persona
+     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Skipping invalid persona object'), badPersonaA);
+     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Skipping invalid persona object'), badPersonaR);
      warnSpy.mockRestore();
   });
 

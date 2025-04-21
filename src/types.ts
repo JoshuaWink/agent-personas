@@ -1,13 +1,13 @@
-import { v4 as uuidv4 } from 'uuid'; // Import uuid
+// Import uuid - Removed as it's used in PersonaRegistry now
 
 // Represents the data structure for a persona
 export type Persona = {
   id: string;                   // Unique identifier (UUID)
   name: string;                 // Unique, human-readable name
-  description: string;          // Short summary
-  instructions: string;         // Core instructions/prompt for the persona (renamed from prompt)
-  tags: string[];               // Searchable tags
-  settings: Record<string, any>; // Flexible settings object (e.g., { temperature: 0.7 })
+  description?: string;         // Short summary (Optional)
+  instructions?: string;        // Core instructions/prompt for the persona (Optional)
+  tags?: string[];              // Searchable tags (Optional)
+  settings?: Record<string, any>; // Flexible settings object (Optional)
   createdAt: string;            // ISO 8601 timestamp of creation
   updatedAt: string;            // ISO 8601 timestamp of last update
 };
@@ -15,10 +15,16 @@ export type Persona = {
 // Input type for creating a new persona (omit system-generated fields)
 export type CreatePersonaInput = Omit<Persona, 'id' | 'createdAt' | 'updatedAt'>;
 
+// Type for the combined active and archived state
+export interface PersonaStorageState {
+  active: Map<string, Persona>;
+  archived: Map<string, Persona>;
+}
+
 // Defines the interface for storage drivers
 export interface StorageDriver {
-  // Loads personas from storage, returning a Map keyed by persona ID
-  load(): Promise<Map<string, Persona>>;
-  // Saves the complete set of personas (provided as a Map) to storage
-  save(personas: Map<string, Persona>): Promise<void>;
+  // Loads both active and archived personas from storage
+  load(): Promise<PersonaStorageState>;
+  // Saves the complete state (both active and archived personas) to storage
+  save(state: PersonaStorageState): Promise<void>;
 } 
