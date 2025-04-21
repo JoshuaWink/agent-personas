@@ -2,7 +2,7 @@ import debounce from 'lodash/debounce'; // Import lodash debounce
 import { DebouncedFunc } from 'lodash'; // Import DebouncedFunc type from main lodash types
 import { v4 as uuidv4 } from 'uuid'; // Import uuid
 // Import ALL necessary types from types.ts now
-import { Persona, StorageDriver, CreatePersonaInput, PersonaStorageState } from "./types"; 
+import { Persona, StorageDriver, CreatePersonaInput, PersonaStorageState, ChangelogEntry } from "./types"; 
 
 export interface RegistryOptions {
   debounceSaveMs?: number;
@@ -63,16 +63,26 @@ export class PersonaRegistry {
   }
 
   // Use CreatePersonaInput, generate ID/timestamps, return full Persona
-  async createPersona(input: CreatePersonaInput): Promise<Persona> {
+  async createPersona(input: CreatePersonaInput, originalIdForDuplication?: string): Promise<Persona> {
     // Check for duplicate name before creating
     const existingNames = Array.from(this.personas.values()).map(p => p.name);
     if (existingNames.includes(input.name)) {
-      throw new Error(`Persona with name \"${input.name}\" already exists.`);
+      throw new Error(`Persona with name "${input.name}" already exists.`);
     }
 
     const now = new Date().toISOString();
+    
+    // Initialize changelog
+    const initialChangelog: ChangelogEntry[] = [
+      { timestamp: now, action: 'created' }
+    ];
+    
+    // Add duplication entry if applicable
+    if (originalIdForDuplication) {
+        initialChangelog.push({ timestamp: now, action: 'duplicated_from', details: `Source ID: ${originalIdForDuplication}` })
+    }
+
     // Construct the new Persona object, ensuring all required fields are present
-    // Optional fields from input are directly assigned
     const newPersona: Persona = {
       id: uuidv4(),
       name: input.name,
@@ -82,6 +92,7 @@ export class PersonaRegistry {
       settings: input.settings, // Optional from input
       createdAt: now,
       updatedAt: now,
+      changelog: initialChangelog, // Add initial changelog
     };
 
     // Update cache first using ID
@@ -149,50 +160,44 @@ export class PersonaRegistry {
 
   // Duplicate an existing persona by ID
   async duplicatePersona(originalId: string): Promise<Persona> {
-    // Duplication should work even if the original is archived?
-    // For now, let's assume we only duplicate *active* personas.
     const originalPersona = this.getPersona(originalId);
     if (!originalPersona) {
       // Check archive too?
       const archived = this.archivedPersonas.get(originalId);
       if (archived) {
-           throw new Error(`Cannot duplicate Persona with ID \"${originalId}\"": it is archived.`);
+           throw new Error(`Cannot duplicate Persona with ID "${originalId}": it is archived.`);
       } else {
-           throw new Error(`Persona with ID \"${originalId}\"" not found.`);
+           throw new Error(`Persona with ID "${originalId}" not found.`);
       }
     }
 
     // Find an available name for the copy
     const newName = this._findAvailableCopyName(originalPersona.name);
 
-    // Prepare input for the new persona, copying relevant fields
-    // Handle optional fields safely during copy
+    // Prepare input for the new persona
     const duplicateInput: CreatePersonaInput = {
       name: newName,
-      description: originalPersona.description, // Copy optional field
-      instructions: originalPersona.instructions, // Copy optional field
-      // Copy optional array: Use spread if exists, else undefined (or empty array if preferred)
+      description: originalPersona.description,
+      instructions: originalPersona.instructions,
       tags: originalPersona.tags ? [...originalPersona.tags] : undefined, 
-      // Copy optional object: Use spread if exists, else undefined (or empty object if preferred)
       settings: originalPersona.settings ? { ...originalPersona.settings } : undefined, 
     };
 
-    // Delegate the actual creation (ID gen, timestamp, save trigger) to createPersona
-    const newPersona = await this.createPersona(duplicateInput);
+    // Pass the original ID to createPersona for the changelog
+    const newPersona = await this.createPersona(duplicateInput, originalId);
     return newPersona;
   }
 
   // Update method uses Omit which correctly handles optional fields from Persona
-  // We pass updates directly after validation in server.ts
-  async updatePersona(id: string, updates: Partial<Omit<Persona, 'id' | 'createdAt' | 'updatedAt'>>): Promise<Persona> {
+  async updatePersona(id: string, updates: Partial<Omit<Persona, 'id' | 'createdAt' | 'updatedAt' | 'changelog'>>): Promise<Persona> {
     const persona = this.personas.get(id);
 
     if (!persona) {
       // Check if it's archived before declaring not found
       if (this.archivedPersonas.has(id)) {
-          throw new Error(`Persona with ID \"${id}\"" is archived and cannot be updated.`);
+          throw new Error(`Persona with ID "${id}" is archived and cannot be updated.`);
       } else {
-          throw new Error(`Persona with ID \"${id}\"" not found for update.`);
+          throw new Error(`Persona with ID "${id}" not found for update.`);
       }
     }
 
@@ -204,24 +209,58 @@ export class PersonaRegistry {
        }
     }
 
-    // Create the updated persona object
-    // Merge existing persona with allowed updates
-    const updatedPersona: Persona = {
-      ...persona, // Start with existing values (including optional ones)
-      ...updates, // Apply updates (overwriting corresponding fields)
-      id: persona.id, // Ensure ID cannot be changed
-      createdAt: persona.createdAt, // Ensure createdAt cannot be changed
-      updatedAt: new Date().toISOString(), // Set new updatedAt timestamp
-    };
-
-    // Update the map
-    this.personas.set(id, updatedPersona);
+    // --- Changelog Generation --- 
+    const changedFields: string[] = [];
+    // Compare provided updates with existing values
+    (Object.keys(updates) as Array<keyof typeof updates>).forEach(key => {
+        // Simple comparison for primitive types & basic check for objects/arrays
+        // A more robust deep comparison might be needed for detailed settings/tags logging
+        if (persona[key] !== updates[key]) { 
+             // Basic check for tags/settings arrays/objects - are they different references or values?
+             // For now, just log if the key was in updates and potentially different.
+             // We need a more robust check for deep equality if necessary.
+            if (key === 'tags' || key === 'settings') {
+                 // Quick JSON stringify comparison for structured data
+                 if (JSON.stringify(persona[key]) !== JSON.stringify(updates[key])) {
+                    changedFields.push(key);
+                 }
+            } else if (persona[key] !== updates[key]) {
+                 changedFields.push(key);
+            }
+        }
+    });
     
-    // Mark state as dirty and trigger save
-    this.isDirty = true;
-    this._debouncedSave();
+    const now = new Date().toISOString();
+    const newChangelog = [...persona.changelog]; // Copy existing changelog
 
-    return updatedPersona; // Return the full updated object
+    if (changedFields.length > 0) {
+        newChangelog.push({
+            timestamp: now,
+            action: 'updated',
+            details: `Updated fields: ${changedFields.join(', ')}`
+        });
+    }
+    // --- End Changelog Generation ---
+
+    // Only update timestamp and save if actual changes were made
+    if (changedFields.length > 0) {
+        const updatedPersona: Persona = {
+          ...persona, 
+          ...updates, 
+          id: persona.id, 
+          createdAt: persona.createdAt, 
+          updatedAt: now, // Use the timestamp from changelog generation
+          changelog: newChangelog, 
+        };
+        // Update the map
+        this.personas.set(id, updatedPersona);
+        this.isDirty = true;
+        this._debouncedSave();
+        return updatedPersona; 
+    } else {
+        // No changes, return the original persona (no update to timestamp or log)
+        return persona;
+    }
   }
 
   // New method to archive a persona
@@ -231,12 +270,25 @@ export class PersonaRegistry {
       return false; // Not found in active personas
     }
 
-    // Add to archived map
-    this.archivedPersonas.set(id, personaToArchive);
+    // --- Add Changelog Entry --- 
+    const now = new Date().toISOString();
+    // Explicitly define the new entry type to satisfy the compiler
+    const archiveEntry: ChangelogEntry = { timestamp: now, action: 'archived' }; 
+    const updatedChangelog = [
+        ...personaToArchive.changelog, 
+        archiveEntry // Add the correctly typed entry
+    ];
+    const archivedPersonaWithLog: Persona = {
+        ...personaToArchive,
+        changelog: updatedChangelog
+    };
+    // --- End Changelog Entry --- 
+
+    // Add to archived map (with updated log)
+    this.archivedPersonas.set(id, archivedPersonaWithLog);
     // Remove from active map
     this.personas.delete(id);
     
-    // Mark state as dirty and trigger save
     this.isDirty = true;
     this._debouncedSave();
 

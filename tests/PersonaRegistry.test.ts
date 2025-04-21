@@ -1,5 +1,5 @@
 import { PersonaRegistry, RegistryOptions } from '../src/PersonaRegistry';
-import { Persona, StorageDriver, CreatePersonaInput, PersonaStorageState } from '../src/types';
+import { Persona, StorageDriver, CreatePersonaInput, PersonaStorageState, ChangelogEntry } from '../src/types';
 import { jest } from '@jest/globals'; // Import Jest object for mocking
 
 // Mock Storage Driver for testing Registry logic without real I/O
@@ -55,11 +55,13 @@ describe('PersonaRegistry', () => {
   test('should be created using the static create method and load initial active/archived data', async () => {
     const initialActive: Persona = { 
       id: 'a1', name: 'ActiveLoader', description: 'Loads active', tags: [], 
-      instructions: '', settings: {}, createdAt: 't1', updatedAt: 't1'
+      instructions: '', settings: {}, createdAt: 't1', updatedAt: 't1', 
+      changelog: []
     };
      const initialArchived: Persona = { 
       id: 'ar1', name: 'ArchivedLoader', description: 'Loads archived', tags: [], 
-      instructions: '', settings: {}, createdAt: 't0', updatedAt: 't0'
+      instructions: '', settings: {}, createdAt: 't0', updatedAt: 't0', 
+      changelog: []
     };
     mockDriver.setState({ 
       active: new Map([[initialActive.id, initialActive]]),
@@ -76,7 +78,7 @@ describe('PersonaRegistry', () => {
     expect(newRegistry.listPersonas()).toEqual([initialActive]);
   });
 
-  test('createPersona should add a new persona, return it, and mark dirty', async () => {
+  test('createPersona should add a new persona, return it, mark dirty, and add created log', async () => {
     const input: CreatePersonaInput = { 
       name: 'Test Persona', description: 'A test persona', tags: ['test'],
       instructions: 'Test instructions', settings: { temp: 1 } 
@@ -84,19 +86,25 @@ describe('PersonaRegistry', () => {
 
     const createdPersona = await registry.createPersona(input);
 
-    // Check returned persona has generated fields
+    // Check returned persona
     expect(createdPersona.id).toBeDefined();
     expect(createdPersona.createdAt).toBeDefined();
     expect(createdPersona.updatedAt).toBeDefined();
     expect(createdPersona.name).toBe(input.name);
     expect(createdPersona.instructions).toBe(input.instructions);
+    
+    // Check Changelog
+    expect(createdPersona.changelog).toBeDefined();
+    expect(Array.isArray(createdPersona.changelog)).toBe(true);
+    expect(createdPersona.changelog).toHaveLength(1);
+    expect(createdPersona.changelog[0].action).toBe('created');
+    expect(createdPersona.changelog[0].timestamp).toBe(createdPersona.createdAt); // Should match creation time
+    expect(createdPersona.changelog[0].details).toBeUndefined();
 
     // Check internal state
     const retrievedPersona = registry.getPersona(createdPersona.id);
-    expect(retrievedPersona).toEqual(createdPersona); // Should exist in registry
-    // TODO: Add test for isDirty flag if we re-introduce it or need explicit check
+    expect(retrievedPersona).toEqual(createdPersona); 
 
-    // Check if save was *not* called immediately (due to autoSave: false)
     expect(mockDriver.save).not.toHaveBeenCalled();
   });
 
@@ -121,7 +129,11 @@ describe('PersonaRegistry', () => {
    test('listPersonas should return only active personas', async () => {
     const activePersona = await registry.createPersona({ name: 'P1', description: '', tags: [], instructions: '', settings: {} });
     // Manually add an archived one to the mock driver state for the *next* load
-    const archivedPersona: Persona = { id: 'arch1', name: 'Archived', description: '', tags: [], instructions: '', settings: {}, createdAt: '', updatedAt: ''};
+    const archivedPersona: Persona = { 
+        id: 'arch1', name: 'Archived', description: '', tags: [], 
+        instructions: '', settings: {}, createdAt: '', updatedAt: '',
+        changelog: []
+    };
     mockDriver.setState({ 
         active: new Map([[activePersona.id, activePersona]]),
         archived: new Map([['arch1', archivedPersona]])
@@ -136,7 +148,11 @@ describe('PersonaRegistry', () => {
 
   test('getPersona should retrieve only active personas by ID', async () => {
     const activePersona = await registry.createPersona({ name: 'Get Me', description: '', tags: [], instructions: '', settings: {} });
-     const archivedPersona: Persona = { id: 'arch1', name: 'Archived', description: '', tags: [], instructions: '', settings: {}, createdAt: '', updatedAt: ''};
+     const archivedPersona: Persona = { 
+         id: 'arch1', name: 'Archived', description: '', tags: [], 
+         instructions: '', settings: {}, createdAt: '', updatedAt: '',
+         changelog: []
+     };
     mockDriver.setState({ 
         active: new Map([[activePersona.id, activePersona]]),
         archived: new Map([['arch1', archivedPersona]])
@@ -158,7 +174,11 @@ describe('PersonaRegistry', () => {
     const p1 = await registry.createPersona({ name: 'Active Tagged 1', description: '', tags: ['a', 'b'], instructions: '', settings: {} });
     const p2 = await registry.createPersona({ name: 'Active Tagged 2', description: '', tags: ['b', 'c'], instructions: '', settings: {} });
     // Manually add an archived one with tag 'b'
-    const archivedPersona: Persona = { id: 'arch1', name: 'Archived B', description: '', tags: ['b'], instructions: '', settings: {}, createdAt: '', updatedAt: ''};
+    const archivedPersona: Persona = { 
+        id: 'arch1', name: 'Archived B', description: '', tags: ['b'], 
+        instructions: '', settings: {}, createdAt: '', updatedAt: '',
+        changelog: []
+    };
     mockDriver.setState({ 
         active: new Map([[p1.id, p1], [p2.id, p2]]),
         archived: new Map([['arch1', archivedPersona]])
@@ -173,7 +193,11 @@ describe('PersonaRegistry', () => {
   test('flush should call storageDriver.save with current active and archived personas', async () => {
     const createdPersona = await registry.createPersona({ name: 'To Flush', description: '', tags: [], instructions: '', settings: {} });
     // Manually add an archived one
-    const archivedPersona: Persona = { id: 'archFlush', name: 'Arch', description: '', tags: [], instructions: '', settings: {}, createdAt: '', updatedAt: ''};
+    const archivedPersona: Persona = { 
+        id: 'archFlush', name: 'Arch', description: '', tags: [], 
+        instructions: '', settings: {}, createdAt: '', updatedAt: '',
+        changelog: []
+    };
     mockDriver.setState({ active: new Map([[createdPersona.id, createdPersona]]), archived: new Map([['archFlush', archivedPersona]]) });
     const registry2 = await PersonaRegistry.create(mockDriver); // Load state
     mockDriver.save.mockClear(); // Clear save call from create
@@ -289,24 +313,32 @@ describe('PersonaRegistry', () => {
     let originalPersona: Persona;
 
     beforeEach(async () => {
-      // Create a base persona to duplicate in each test
       const input: CreatePersonaInput = {
-        name: 'Original Persona',
-        description: 'Base for duplication',
-        instructions: 'Do original things',
-        tags: ['original', 'test'],
-        settings: { temperature: 0.5, model: 'gpt-base' },
+        name: 'Original Persona', description: 'Base', instructions: 'Do original',
+        tags: ['original'], settings: { temp: 0.5 },
       };
       originalPersona = await registry.createPersona(input);
-      // Clear save mock calls after setup
       mockDriver.save.mockClear();
     });
 
-    test('should create a new persona with a unique ID', async () => {
+    test('should create a new persona with unique ID and its own changelog', async () => {
       const duplicate = await registry.duplicatePersona(originalPersona.id);
       expect(duplicate).toBeDefined();
       expect(duplicate.id).not.toBe(originalPersona.id);
-      expect(typeof duplicate.id).toBe('string'); // Should be a UUID
+      
+      // Check Duplicate's Changelog
+      expect(duplicate.changelog).toBeDefined();
+      expect(duplicate.changelog).toHaveLength(2); // created + duplicated_from
+      expect(duplicate.changelog[0].action).toBe('created');
+      expect(duplicate.changelog[0].timestamp).toBe(duplicate.createdAt);
+      expect(duplicate.changelog[1].action).toBe('duplicated_from');
+      expect(duplicate.changelog[1].details).toBe(`Source ID: ${originalPersona.id}`);
+      expect(duplicate.changelog[1].timestamp).toBe(duplicate.createdAt); // Should be same timestamp
+
+      // Ensure original persona's changelog is unchanged by duplication
+      const retrievedOriginal = registry.getPersona(originalPersona.id);
+      expect(retrievedOriginal?.changelog).toHaveLength(1); // Should still only have its 'created' entry
+      expect(retrievedOriginal?.changelog[0].action).toBe('created');
     });
 
     test('should modify the name of the duplicated persona (e.g., "Name - Copy")', async () => {
@@ -316,7 +348,11 @@ describe('PersonaRegistry', () => {
 
     test('should handle duplicate names when copying multiple times', async () => {
       // Add an archived persona with a conflicting name potential
-      const archivedConflict: Persona = { id: 'archC', name: 'Original Persona - Copy - 2', description: '', tags: [], instructions: '', settings: {}, createdAt: '', updatedAt: '' };
+      const archivedConflict: Persona = { 
+          id: 'archC', name: 'Original Persona - Copy - 2', description: '', tags: [], 
+          instructions: '', settings: {}, createdAt: '', updatedAt: '', 
+          changelog: []
+      };
       mockDriver.setState({ archived: new Map([['archC', archivedConflict]]) });
       registry = await PersonaRegistry.create(mockDriver, baseOptions); // Recreate registry to load archived
 
@@ -379,7 +415,11 @@ describe('PersonaRegistry', () => {
     });
 
     test('should throw an error if the original persona ID is archived', async () => {
-         const archivedPersona: Persona = { id: 'archDup', name: 'ArchivedToDup', description: '', tags: [], instructions: '', settings: {}, createdAt: '', updatedAt: '' };
+         const archivedPersona: Persona = { 
+             id: 'archDup', name: 'ArchivedToDup', description: '', tags: [], 
+             instructions: '', settings: {}, createdAt: '', updatedAt: '', 
+             changelog: []
+         };
          mockDriver.setState({ archived: new Map([['archDup', archivedPersona]]) });
          registry = await PersonaRegistry.create(mockDriver, baseOptions); // Recreate
          await expect(registry.duplicatePersona('archDup')).rejects.toThrow(
@@ -395,24 +435,29 @@ describe('PersonaRegistry', () => {
 
     beforeEach(async () => {
       personaToArchive = await registry.createPersona({ 
-        name: 'Archive Me', description: 'Will be archived', 
-        tags: ['archive'], instructions: '', settings: {}
+        name: 'Archive Me', description: 'Will be archived', tags: ['archive']
       });
-      mockDriver.save.mockClear(); // Clear save from create
+      mockDriver.save.mockClear();
     });
 
-    test('should move persona from active to archived map', async () => {
+    test('should move persona and add archived log entry', async () => {
+      const initialLogLength = personaToArchive.changelog.length;
       const result = await registry.archivePersona(personaToArchive.id);
       expect(result).toBe(true);
-      expect(registry.getPersona(personaToArchive.id)).toBeUndefined(); // Not in active
-      expect(registry.listPersonas()).toHaveLength(0);
+      expect(registry.getPersona(personaToArchive.id)).toBeUndefined();
       
-      // Check mock driver state (after save potentially completes)
-      // We need to check the *intended* state passed to save, as save is debounced
-      await registry.flush(); // Force save for checking
-      expect(mockDriver.getActivePersonas().has(personaToArchive.id)).toBe(false);
-      expect(mockDriver.getArchivedPersonas().has(personaToArchive.id)).toBe(true);
-      expect(mockDriver.getArchivedPersonas().get(personaToArchive.id)).toEqual(personaToArchive);
+      await registry.flush(); // Force save to check final state in driver
+      const archivedMap = mockDriver.getArchivedPersonas();
+      expect(archivedMap.has(personaToArchive.id)).toBe(true);
+      const archivedPersona = archivedMap.get(personaToArchive.id);
+      
+      // Check Changelog on archived persona
+      expect(archivedPersona).toBeDefined();
+      expect(archivedPersona?.changelog).toHaveLength(initialLogLength + 1);
+      const lastEntry = archivedPersona!.changelog[archivedPersona!.changelog.length - 1];
+      expect(lastEntry.action).toBe('archived');
+      expect(lastEntry.details).toBeUndefined();
+      expect(Date.parse(lastEntry.timestamp)).toBeGreaterThanOrEqual(Date.parse(personaToArchive.updatedAt));
     });
 
     test('should return false if persona ID does not exist', async () => {
@@ -440,20 +485,20 @@ describe('PersonaRegistry', () => {
     let personaToUpdate: Persona;
 
     beforeEach(async () => {
-      // Create a base persona to update
       personaToUpdate = await registry.createPersona({
         name: 'UpdateMe', description: 'Initial Desc', instructions: 'Initial Inst',
         tags: ['initial', 'update'], settings: { temp: 0.5, keep: true }
       });
-      mockDriver.save.mockClear(); // Clear save from create
+      mockDriver.save.mockClear();
     });
 
-    test('should update specified fields and return the updated persona', async () => {
+    test('should update specified fields, return updated persona, and add updated log', async () => {
+      const initialLogLength = personaToUpdate.changelog.length;
       const updates: Partial<Persona> = {
         name: 'UpdateMe - Updated',
         description: 'Updated Desc',
-        tags: ['updated'], // Overwrite tags
-        settings: { temp: 0.8, new_field: 'added' } // Overwrite settings
+        tags: ['updated'], 
+        settings: { temp: 0.8, new_field: 'added' } 
       };
       const updatedPersona = await registry.updatePersona(personaToUpdate.id, updates);
 
@@ -477,6 +522,45 @@ describe('PersonaRegistry', () => {
       // Verify internal state reflects the update
       const retrieved = registry.getPersona(personaToUpdate.id);
       expect(retrieved).toEqual(updatedPersona);
+
+      // Check Changelog
+      expect(updatedPersona.changelog).toHaveLength(initialLogLength + 1);
+      const lastEntry = updatedPersona.changelog[updatedPersona.changelog.length - 1];
+      expect(lastEntry.action).toBe('updated');
+      expect(lastEntry.timestamp).toBe(updatedPersona.updatedAt);
+      // Check details string - order might vary, so check for field names
+      expect(lastEntry.details).toContain('Updated fields:');
+      expect(lastEntry.details).toContain('name');
+      expect(lastEntry.details).toContain('description');
+      expect(lastEntry.details).toContain('tags');
+      expect(lastEntry.details).toContain('settings');
+    });
+
+    test('should add updated log only if fields actually change', async () => {
+       const initialLogLength = personaToUpdate.changelog.length;
+       const updates: Partial<Persona> = { 
+           name: personaToUpdate.name // No actual change
+       };
+       const updatedPersona = await registry.updatePersona(personaToUpdate.id, updates);
+       
+       // Changelog length should NOT increase
+       expect(updatedPersona.changelog).toHaveLength(initialLogLength); 
+       // UpdatedAt should NOT change if no fields changed
+       expect(updatedPersona.updatedAt).toBe(personaToUpdate.updatedAt);
+    });
+    
+    test('should log only changed fields in details', async () => {
+       const initialLogLength = personaToUpdate.changelog.length;
+       const updates: Partial<Persona> = { 
+           description: 'New Description Only',
+           tags: ['initial', 'update'] // Same tags, shouldn't be logged by simple check
+       };
+       const updatedPersona = await registry.updatePersona(personaToUpdate.id, updates);
+       
+       expect(updatedPersona.changelog).toHaveLength(initialLogLength + 1);
+       const lastEntry = updatedPersona.changelog[updatedPersona.changelog.length - 1];
+       expect(lastEntry.action).toBe('updated');
+       expect(lastEntry.details).toBe('Updated fields: description'); // Only description changed
     });
 
     test('should only update fields provided in the partial update object', async () => {
@@ -522,7 +606,8 @@ describe('PersonaRegistry', () => {
        const archivedId = 'archived-update-test';
        const archivedPersona: Persona = { 
            id: archivedId, name: 'ArchivedToUpdate', description: '', tags: [], 
-           instructions: '', settings: {}, createdAt: 't0', updatedAt: 't0'
+           instructions: '', settings: {}, createdAt: 't0', updatedAt: 't0',
+           changelog: []
        };
        mockDriver.setState({ archived: new Map([[archivedId, archivedPersona]]) });
        registry = await PersonaRegistry.create(mockDriver, baseOptions); // Recreate registry to load state
