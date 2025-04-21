@@ -1,0 +1,48 @@
+{
+  "compilerOptions": {
+    /* Base Options */
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "target": "ES2022", // Target modern Node.js versions
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "moduleDetection": "force",
+    "isolatedModules": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    /* If NOT transpiling with tsconfig. */
+    // "module": "NodeNext", // Use if targeting Node.js's native ESM support
+    // "outDir": "./dist",
+
+    /* If your code runs in the DOM: */
+    // "lib": ["es2022", "dom", "dom.iterable"],
+
+    /* If you are using Bun: */
+    // "module": "NodeNext", 
+    // "moduleResolution": "bundler",
+    // "types": ["bun-types"], // add Bun global
+
+    /* If you are building a library: */
+    "module": "CommonJS", // Or ESNext/NodeNext depending on target consumers
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+
+    /* If you are using an older JS environment */
+    // "module": "CommonJS",
+    // "moduleResolution": "node",
+
+    /* Linting */
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "tests"]
+} 
